@@ -10,8 +10,13 @@
 //   hidden inline. Rename/delete affordances only exist in edit mode.
 // - Edit mode: groups expand inline, rows show drag affordances, footer offers
 //   new-group / reset. Group heads drag-reorder; rows drag across groups.
+//
+// Loader id MUST equal package.json's `name`: the runtime keys its module table
+// by registration.id, but the host graph row is keyed by package name and
+// imports `<package name>/client`. Any mismatch (e.g. the scaffold's `@local/…`
+// prefix) makes the row unresolvable and the plugin never activates.
 window.__ModuleLoader__.load({
-  id: '@local/dsh-settings-arranger',
+  id: 'dsh-settings-arranger',
   factory(require) {
     const React = require('react');
     const ReactDOM = require('react-dom');

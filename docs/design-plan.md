@@ -215,3 +215,15 @@ dsh-settings-arranger/
 - 可见性规则统一为 `if (!editing || collapsed.includes(g.id)) hidden.add(id)`（`apply()` 与 `syncFlags()` 两处都改，保持宿主 commit 中途也一致）。
 - 删掉 `.dsa-editing [data-dsa-collapsed-member="1"]{opacity:.45}` 和对应的 `data-dsa-collapsed-member` 标记。
 - 代价（已知并接受）：收起状态下组内行不存在，无法作为 drop target——要往里拖或往外拖，先点组头展开。
+
+### 2026-10-17：npm 版装上不生效（client.js 的 Loader id 与包名不一致）
+
+用户反馈：别人安装 npm 上的 `dsh-settings-arranger` 后启动异常/插件不激活，排查发现 npm 包里的 `client.js` 写的是 `id: '@local/dsh-settings-arranger'`。
+
+根因（dsh 0.2.0-rc.2 实测）：
+
+- 宿主 `dsh-client-modules` 为每个声明 `dsh.client` 的包生成一行，行 id = **package.json 的 `name`**，并用 `<name>/client` 这个 specifier 去 `import`；浏览器端 `ClientModuleSystem.register()` 用 `registration.id`（即 `client.js` 里 `__ModuleLoader__.load({id})` 的值）作 key，`materialize('dsh-settings-arranger')` 查不到 `'@local/dsh-settings-arranger'` 这个 key → `client-modules: no registered factory for "dsh-settings-arranger"`。宿主侧 `inactiveEntries()` 会报 `dsh-settings-arranger (dsh-settings-arranger): failed to import`，属于启动失败（不是可选警告）。
+- 本地开发一直没暴露，是因为 `cordis.patch.yml` 里的 `name:` 当时也写成 `@local/...`，宿主按那个名字去找包，恰好对得上；改成正名后两边就对不齐了。
+- 这个 `@local/` 前缀来自 dsh 内置脚手架模板（`@deepseek-ai/dsh-agent-preset/skills/cordis-plugin-development/templates/`），模板假定包名也是 `@local/xxx`。**发布到 npm 的插件必须把 `package.json.name`、`cordis.patch.yml` 的 `name:`、`client.js` 的 `id` 三处统一成 npm 包名。**
+
+修复：`client.js` 的 `id` 改为 `dsh-settings-arranger`，并在该行上方留注释说明该规则。校验方法（不必重启宿主）：`curl <实例>/plugins/??<pkg>/client.js&rev=…` 或直接 `grep "__ModuleLoader__.load" -A1 node_modules/<pkg>/client.js`，`id` 必须等于包名。

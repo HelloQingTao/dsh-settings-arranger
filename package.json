@@ -1,6 +1,6 @@
 {
   "name": "dsh-settings-arranger",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "description": "设置页导航整理器：给 dsh 设置对话框左侧分区导航加拖拽排序、自定义分组与折叠 | Settings nav arranger for DeepSeek Harness: drag-to-reorder and group your settings sections",
   "type": "module",
   "main": "./index.js",
