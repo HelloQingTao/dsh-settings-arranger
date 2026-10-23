@@ -218,21 +218,28 @@ window.__ModuleLoader__.load({
 .dsa-editing .dsa-group-head[data-dsa-sep="1"]{margin-top:12px}
 .dsa-nav-list > [data-dsa-end="1"]{border-bottom:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25));padding-bottom:8px}
 .dsa-editing > [data-dsa-end="1"]{padding-bottom:12px}
-/* Group heads read as containers, not as plain rows: a brand-coloured spine. */
-.dsa-group-head{box-shadow:inset 3px 0 0 0 var(--dsa-accent, var(--dsw-alias-label-secondary))}
+/* Group heads read as containers, not as plain rows: a brand-coloured spine.
+   Painted as border-left (NOT inset box-shadow): Chromium drops the straight
+   segments of an inset box-shadow on an element that also carries a border and
+   a border-radius, at fractional raster scales (Windows display scaling like
+   110%/125%/130% or a fractional page zoom) — the spine then renders as two
+   arcs with a hole in the middle. Borders themselves rasterize correctly at
+   any scale, so the spine rides the border path instead. Left padding is
+   reduced 12px→9px so the content column stays pixel-identical. */
 /* Edit mode: member rows indent under their group head, so a group's extent
    stays obvious while sorting. */
 .dsa-editing [data-dsa-member="1"]{padding-left:28px}
 
 
 /* Group head — normal mode: styled like a native navCell (40px, 14px label). */
-.dsa-group-head{box-sizing:border-box;display:flex;align-items:center;gap:8px;height:40px;padding:9px 16px 9px 12px;
+.dsa-group-head{box-sizing:border-box;display:flex;align-items:center;gap:8px;height:40px;padding:9px 16px 9px 9px;
   width:100%;text-align:left;background:none;border:none;cursor:pointer;user-select:none;
+  border-left:3px solid var(--dsa-accent, var(--dsw-alias-label-secondary));
   color:var(--dsw-alias-label-primary);font-family:inherit;font-size:14px;font-weight:400;line-height:22px;
   border-radius:var(--dsw-radius-md)}
 .dsa-group-head:hover{background:var(--dsw-specific-sidebar-nav-item-hover, var(--dsw-alias-interactive-bg-hover))}
 /* Edit mode: compact section header above its inline rows. */
-.dsa-editing .dsa-group-head{height:30px;padding:4px 12px;font-size:12px;font-weight:600;letter-spacing:.4px;
+.dsa-editing .dsa-group-head{height:30px;padding:4px 12px 4px 9px;font-size:12px;font-weight:600;letter-spacing:.4px;
   color:var(--dsw-alias-label-secondary);text-transform:none}
 .dsa-editing .dsa-group-head:hover{color:var(--dsw-alias-label-primary)}
 .dsa-caret{flex:none;display:inline-block;width:9px;text-align:center;transition:transform .15s ease;font-size:9px;line-height:1;color:var(--dsw-alias-label-secondary)}
@@ -269,8 +276,10 @@ window.__ModuleLoader__.load({
 .dsa-drop-before{box-shadow:0 -2px 0 0 var(--dsa-accent, currentColor)}
 .dsa-drop-after{box-shadow:0 2px 0 0 var(--dsa-accent, currentColor)}
 /* Group heads keep their spine while a drop marker is shown. */
-.dsa-group-head.dsa-drop-before{box-shadow:inset 3px 0 0 0 var(--dsa-accent, currentColor),0 -2px 0 0 var(--dsa-accent, currentColor)}
-.dsa-group-head.dsa-drop-after{box-shadow:inset 3px 0 0 0 var(--dsa-accent, currentColor),0 2px 0 0 var(--dsa-accent, currentColor)}
+/* The head's spine is a constant border-left now, so drop marks only add the
+   edge line (the old rules had to re-assert the inset spine they replaced). */
+.dsa-group-head.dsa-drop-before{box-shadow:0 -2px 0 0 var(--dsa-accent, currentColor)}
+.dsa-group-head.dsa-drop-after{box-shadow:0 2px 0 0 var(--dsa-accent, currentColor)}
 .dsa-dragging{opacity:.4}
 @media (hover:none){.dsa-drag-handle{display:none !important}.dsa-editing [draggable="true"]{cursor:auto}}
 

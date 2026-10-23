@@ -227,3 +227,21 @@ dsh-settings-arranger/
 - 这个 `@local/` 前缀来自 dsh 内置脚手架模板（`@deepseek-ai/dsh-agent-preset/skills/cordis-plugin-development/templates/`），模板假定包名也是 `@local/xxx`。**发布到 npm 的插件必须把 `package.json.name`、`cordis.patch.yml` 的 `name:`、`client.js` 的 `id` 三处统一成 npm 包名。**
 
 修复：`client.js` 的 `id` 改为 `dsh-settings-arranger`，并在该行上方留注释说明该规则。校验方法（不必重启宿主）：`curl <实例>/plugins/??<pkg>/client.js&rev=…` 或直接 `grep "__ModuleLoader__.load" -A1 node_modules/<pkg>/client.js`，`id` 必须等于包名。
+
+### 2026-10-23：Windows 缩放下组头主题色条中间断开（inset box-shadow → border-left）
+
+用户报告（附 Windows 截图）：「win下，每个分组左侧的主题色条，从第二条开始，不是圆润的，中间有个黑色缺口，mac下是正常的」。
+
+取证与根因：
+
+- 断开的恰好全是带 `data-dsa-sep`（即同时有 `border-top` 发丝线）的组头；首组（无任何 border）永远完整。缺口 ≈16px，位置居中，两端圆弧完好。
+- macOS Chromium 复现不出（DPR 整数）；在真实页面上用 CSS `zoom` 扫描分数化缩放，1.05/1.1/1.15/1.2/1.3 全部复现同症状，1.0/1.25/1.4/1.5 正常——与 Windows 用户常见的 110%/125%/130% 显示缩放吻合。
+- 逐项开关实验定位触发条件：**元素同时具有 `inset box-shadow` + 任意 `border` + `border-radius` 时，Chromium 在分数化光栅缩放下会丢弃阴影的直边段**（只剩四角圆弧）。极简复现页不含 border 时不断，加 border 即断。
+
+修复：主题色条从 `box-shadow:inset 3px 0 0 0` 改为 **`border-left:3px solid var(--dsa-accent,…)`**——边框在任何缩放下都走稳定的渲染路径。左内边距 12px→9px 补偿 3px 边框占位，内容列位置逐像素不变；编辑态头同理（`4px 12px`→`4px 12px 4px 9px`）。拖拽落点线规则里原来为了「顶掉 box-shadow 时保住色条」而重复断言的 `inset 3px` 段随之删除，只留 `0 ∓2px` 线（色条已由 border 常驻）。
+
+验证（macOS Chromium + dsh web 真实页面）：
+
+- 修复前坏分数 1.05/1.1/1.15/1.2/1.3：修复后 4 段主题条全部连续（此前各断成 ~13px+~11px 两段）。
+- zoom 1.0：分段位置与修复前逐像素一致（无外观回归）。
+- 编辑态组头色条连续、落点线计算样式为 `rgb(…N) 0px 2px 0px 0px` 且肉眼可见；普通态浅色/深色主题截图复核均连续。
