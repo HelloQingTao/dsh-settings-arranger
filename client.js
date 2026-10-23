@@ -41,6 +41,12 @@ window.__ModuleLoader__.load({
           groups: parsed.groups.filter(g => g && typeof g.id === 'string' && Array.isArray(g.sectionIds)),
           collapsed: Array.isArray(parsed.collapsed) ? parsed.collapsed : [],
           order: Array.isArray(parsed.order) ? parsed.order : null,
+          // Last section the user visited (data-dsa-id). Replayed on the next
+          // dialog open: the shell always resets the selection to its first
+          // row (rows carry data-modal-autofocus), so without this the user
+          // lands on 账号与余额 every time. Survives independently of whether
+          // any groups exist.
+          lastSection: typeof parsed.lastSection === 'string' ? parsed.lastSection : null,
         };
       } catch { return null; }
     }
@@ -349,7 +355,43 @@ window.__ModuleLoader__.load({
       /** Single read path for mutation handlers: always the freshest persisted
           copy, never a hand-built object missing newer top-level keys (order). */
       snapshot() {
-        return loadState() || this.state || { groups: [], collapsed: [], order: [] };
+        return loadState() || this.state || { groups: [], collapsed: [], order: [], lastSection: null };
+      },
+
+      /** Remember the section the user just opened (row identity). Only real
+       *  user clicks record; our own replay click is isTrusted=false and the
+       *  submenu item handler calls this directly before replaying. */
+      recordLast(id) {
+        if (!id) return;
+        const st = this.snapshot();
+        if (st.lastSection === id) return;
+        st.lastSection = id;
+        this.state = st;
+        saveState(st);
+      },
+
+      /** Once per dialog mount: restore the user's last section after the
+       *  shell finished its own initial focus pass. One delayed attempt, no
+       *  retries — if the row is gone (removed / locale switched) stay silent. */
+      scheduleReplay() {
+        clearTimeout(this._replayT);
+        this._replayT = setTimeout(() => this.replayLast(), 100);
+      },
+
+      replayLast() {
+        if (this.editing || !this.navList || !this.navList.isConnected) return;
+        const id = this.snapshot().lastSection;
+        if (!id) return;
+        const row = this.nativeRows().find(r => r.id === id);
+        // Unknown id (row deleted, label changed with the locale): skip quietly.
+        if (!row) return;
+        // Already the active section (e.g. the shell kept the selection): no-op.
+        if (row.el.getAttribute('aria-current') === 'true') return;
+        row.el.click();
+        // element.click() does not move keyboard focus, but the shell focused
+        // its first row on open — follow the selection so the focus ring and
+        // the highlight agree.
+        try { row.el.focus({ preventScroll: true }); } catch { row.el.focus(); }
       },
       setEditing(v) {
         this.editing = v;
@@ -609,7 +651,14 @@ window.__ModuleLoader__.load({
           label.className = 'dsa-submenu-label';
           label.textContent = id;
           item.appendChild(label);
-          item.addEventListener('click', () => { this.closeSubmenu(); rowEl.click(); });
+          item.addEventListener('click', () => {
+            // Record BEFORE the programmatic row click: rowEl.click() is not
+            // isTrusted, so the nav-level listener ignores it — this call is
+            // the only record path for grouped (submenu) entries.
+            this.recordLast(id);
+            this.closeSubmenu();
+            rowEl.click();
+          });
           menu.appendChild(item);
         }
         if (items === 0) {
@@ -1048,6 +1097,10 @@ window.__ModuleLoader__.load({
         ? rawOrder
         : [...st.groups.map(g => ({ kind: 'group', id: g.id })), ...miscIds.map(id => ({ kind: 'row', id }))];
       st.order = orderFrom(candidates, st, rowIds);
+      // Carry the last-visited section through normalization (apply() replaces
+      // this.state with the normalized copy; dropping the field here would
+      // silently erase it on every render).
+      st.lastSection = (raw && typeof raw.lastSection === 'string') ? raw.lastSection : null;
       return st;
     }
 
@@ -1116,6 +1169,19 @@ window.__ModuleLoader__.load({
           tagRows(list);
           ARRANGER.watch(list);
           ARRANGER.render();
+          // Record the user's section choice (capture phase, so the shell
+          // cannot swallow it). Only trusted clicks: our replay uses
+          // element.click(). Own chrome ([data-dsa-own]: footer, head actions)
+          // is not a section — clicking 新建分组 must not be remembered as one.
+          list.addEventListener('click', e => {
+            if (ARRANGER.editing || !e.isTrusted) return;
+            const btn = e.target && e.target.closest ? e.target.closest('button[data-dsa-id]') : null;
+            if (!btn || btn.closest('[data-dsa-own]')) return;
+            if (!ARRANGER.navList || !ARRANGER.navList.contains(btn)) return;
+            ARRANGER.recordLast(btn.getAttribute('data-dsa-id'));
+          }, true);
+          // Restore where the user left off (shell resets to its first row).
+          if (!ARRANGER.editing) ARRANGER.scheduleReplay();
         }
         // If list is null (transient DOM state), keep ARRANGER.navList; the
         // next setEditing/render call re-anchors lazily via ensureNav().

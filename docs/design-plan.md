@@ -245,3 +245,31 @@ dsh-settings-arranger/
 - 修复前坏分数 1.05/1.1/1.15/1.2/1.3：修复后 4 段主题条全部连续（此前各断成 ~13px+~11px 两段）。
 - zoom 1.0：分段位置与修复前逐像素一致（无外观回归）。
 - 编辑态组头色条连续、落点线计算样式为 `rgb(…N) 0px 2px 0px 0px` 且肉眼可见；普通态浅色/深色主题截图复核均连续。
+
+### 2026-10-23：新功能「设置页记忆上次选中」
+
+用户原话：「新增功能，当用户点击了某个item（如某个一级item，或者二级下拉的item），下一次进设置页，自动选中这个item（右侧显示此item的内容）可以做吗？分析一下」——随后拍板「新增功能，注意做到dsh web下，测试也是在dsh web，开始」。
+
+前提（真机实证）：
+
+- shell 不记忆选中项：打开设置永远回第一行「账号与余额」（行自带 `data-modal-autofocus` / `data-dsh-automatic-focus`，设计如此）。
+- 程序化 `row.click()` 可让 shell 正确切换右侧内容并转移 `aria-current`，无需碰 shell 内部状态。
+- 行无内部 id，唯一稳定标识是插件的 `data-dsa-id`（本地化标签文本）；换语言后记录失配，重放时静默跳过（与分组功能同一约束）。
+
+实现（client.js，约 70 行）：
+
+- `state.lastSection`（字符串）：`loadState()` 与 `normalizeState()` 显式保留该字段（两处都会重建对象，漏带即静默丢失）。
+- **记录**：① boot 锚定列表时挂捕获阶段 click 监听，`e.isTrusted===true` 且目标为 `button[data-dsa-id]` 且不在 `[data-dsa-own]`（自家 footer/组头操作钮）内时记 `recordLast(id)`——排除自家按钮是因为 `tagRows` 会给 footer 按钮也打上 data-dsa-id，否则点「新建分组」会被当成 section 记下、下次重放时误点它。② 二级 item 在 `toggleSubmenu` 的 item click handler 里直接 `recordLast(id)`（先于 `rowEl.click()`，后者 isTrusted=false 不会重复记录）。
+- **重放**：`scheduleReplay()`（boot 锚定分支调用，100ms 延迟等 shell 初始聚焦完成）→ `replayLast()`：editing 态/列表断开/无记录/行不存在（换语言、被删）一律静默跳过；目标行已是 `aria-current` 则不重复点；`row.el.click()` 后补 `focus({preventScroll:true})`（element.click() 不移焦点，而 shell 开弹窗时聚焦了第一行，需让焦点环与高亮一致）。boot 每次弹窗打开遇到的都是新列表节点，天然「每次弹窗只放一次」。
+- 记录会创建 state（无分组用户也会写入 `{groups:[],…,lastSection}`）——记忆功能独立于分组功能存在。
+
+验证（dsh web @3080，playwright 真机）：
+
+- T1 一级 item：点「通用设置」→ lastSection 写入 ✓；Esc 关闭重开 → 自动选中「通用设置」✓。
+- T1c 动态更新：改点「全局指令」→ 重开放到「全局指令」✓。
+- T2 重放生效：重开弹窗 shell 先回默认、插件 100ms 内改选 lastSection ✓。
+- T3 二级 item（组内隐藏行）：建临时组 → 点组头开下拉 → 点「bili设置」→ 记录 ✓；隐藏行 click 成功触发 shell 选中 ✓；关闭重开 → 自动选中「bili设置」且该行保持隐藏（右侧直达）✓。
+- T4 编辑态：点击行不改 lastSection（编辑态点击不记录）✓。
+- T5 无分组：`groups:[]` 时记忆与重放同样工作 ✓。
+- 边界：换语言/行被删 → `replayLast` 查不到行静默跳过（代码路径审查）。
+- 测试期间临时改动 localStorage 与 node_modules，测后均已复原（web profile 恢复 npm v0.1.3，发版后市场更新即得此功能）。
