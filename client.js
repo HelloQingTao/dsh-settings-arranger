@@ -63,6 +63,21 @@ window.__ModuleLoader__.load({
     }
     function clearState() { try { localStorage.removeItem(STORAGE_KEY); } catch {} }
 
+    // ---- hot-reload takeover ------------------------------------------------
+    // client-hmr re-executes this module on file change WITHOUT tearing the
+    // previous instance down: two ARRANGERs then anchor the same nav list and
+    // their apply() passes keep deleting each other's group heads — the user
+    // sees group labels flip-flop. Retire the previous instance explicitly
+    // before building a fresh one.
+    if (typeof window !== 'undefined' && window.__dsaArranger) {
+      const prev = window.__dsaArranger;
+      prev.__dsaDead = true;
+      try { prev.observer && prev.observer.disconnect(); } catch {}
+      clearTimeout(prev._t); clearTimeout(prev._raf); clearTimeout(prev._replayT);
+      if (window.__dsaBootMo) { try { window.__dsaBootMo.disconnect(); } catch {} }
+      if (window.__dsaApi) clearTimeout(window.__dsaApi._putT);
+    }
+
     // ---- config-file sync (host half) -------------------------------------
     // The host half (index.js) persists the layout in
     // $DSH_HOME/settings-arranger.json — ONE global file shared by web and
@@ -134,8 +149,15 @@ window.__ModuleLoader__.load({
           const fileState = data && data.config && data.config.layout ? parseLayout(data.config.layout) : null;
           const local = loadState();
           if (fileState) {
-            if (JSON.stringify(fileState) !== JSON.stringify(local)) {
+            const encoded = JSON.stringify(fileState);
+            // Keep the mirror in lockstep so first paint matches the file.
+            if (JSON.stringify(local) !== encoded) {
               try { localStorage.setItem(STORAGE_KEY, JSON.stringify(fileState)); } catch {}
+            }
+            // The in-memory state can go stale even when the mirror is current
+            // (another tab shares the same localStorage), so compare against it.
+            const cur = arranger.__dsaDead ? null : arranger.state;
+            if (JSON.stringify(parseLayout(cur)) !== encoded) {
               arranger.state = fileState;
               if (arranger.navList && arranger.navList.isConnected) arranger.render();
             }
@@ -458,7 +480,7 @@ window.__ModuleLoader__.load({
        *  user clicks record; our own replay click is isTrusted=false and the
        *  submenu item handler calls this directly before replaying. */
       recordLast(id) {
-        if (!id) return;
+        if (!id || this.__dsaDead) return;
         const st = this.snapshot();
         if (st.lastSection === id) return;
         st.lastSection = id;
@@ -554,9 +576,11 @@ window.__ModuleLoader__.load({
         const rows = this.nativeRows();
         const rowIds = rows.map(r => r.id);
         const byId = new Map(rows.map(r => [r.id, r.el]));
-        // Normalize (and migrate) the layout model before deciding anything:
-        // this.state may still carry the older groups + __misc__ shape.
-        const norm = normalizeState(this.state, rowIds);
+        // Normalize (and migrate) the layout model before deciding anything.
+        // Render from the live mirror (snapshot()), never from this.state:
+        // the in-memory state goes stale whenever another tab or profile
+        // saves a newer layout (same-localStorage tabs / cross-profile file).
+        const norm = normalizeState(this.snapshot(), rowIds);
         this.state = norm;
         const groups = norm.groups;
         const collapsed = norm.collapsed;
@@ -815,6 +839,7 @@ window.__ModuleLoader__.load({
         title.className = 'dsa-group-title'; title.textContent = label;
         head.appendChild(handle); head.appendChild(caret); head.appendChild(title);
         head.addEventListener('click', () => {
+          if (this.__dsaDead) return;
           const nowCollapsed = head.getAttribute('data-collapsed') !== '1';
           head.setAttribute('data-collapsed', nowCollapsed ? '1' : '0');
           const st = this.snapshot();
@@ -976,6 +1001,7 @@ window.__ModuleLoader__.load({
        *  sequence (group blocks + single ungrouped rows). Dragging a group onto a
        *  plain row parks the whole group block right above/below that row. */
       move(src, target, before) {
+        if (this.__dsaDead) return;
         if (!src || !src.id || !target || !target.id) return;
         if (src.kind === target.kind && src.id === target.id) return;
         // Always start from persisted state: this.state may be stale/null if
@@ -1066,6 +1092,7 @@ window.__ModuleLoader__.load({
       },
 
       render() {
+        if (this.__dsaDead) return;
         try {
           this.apply();
         } catch (e) { console.warn('[dsh-settings-arranger] render failed:', e); }
@@ -1131,7 +1158,7 @@ window.__ModuleLoader__.load({
 
     // Debug/verification handle (harmless in production; useful for test
     // tooling to drive and inspect the plugin from the page console).
-    if (typeof window !== 'undefined') window.__dsaArranger = ARRANGER;
+    if (typeof window !== 'undefined') { window.__dsaArranger = ARRANGER; window.__dsaApi = API; }
 
     // Reconcile once with the host config file: the file is the authority,
     // the mirror follows it (or migrates into it on first run).
@@ -1258,6 +1285,7 @@ window.__ModuleLoader__.load({
     // ---- bootstrap: watch for dialog mount --------------------------------
     let lastList = null;
     const boot = () => {
+      if (ARRANGER.__dsaDead) return;
       injectCss();
       const list = findNavList();
       if (list && list !== lastList) {
@@ -1303,6 +1331,8 @@ window.__ModuleLoader__.load({
     };
     const mo = new MutationObserver(() => boot());
     mo.observe(document.body, { childList: true, subtree: true });
+    // Handle for a successor instance's hot-reload takeover (module top).
+    if (typeof window !== 'undefined') window.__dsaBootMo = mo;
     boot();
 
     return {
