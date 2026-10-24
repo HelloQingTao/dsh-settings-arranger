@@ -114,16 +114,20 @@ window.__ModuleLoader__.load({
         }, 300);
       },
       /**
-       * One-shot reconcile at module load; the file is the authority.
+       * Re-read the authoritative file and apply it to this window. Runs once
+       * at module load AND every time the settings dialog mounts, so renames
+       * or regrouping done in another window/profile show up on the next
+       * dialog open without a full page reload. Unreachable route degrades
+       * silently (one warn); localStorage keeps working.
        * - File has a layout → mirror it into localStorage (and re-render if
-       *   the dialog happens to be open) when it differs from the mirror.
-       * - File is empty but localStorage has a layout → upload it once
-       *   (first-come-first-served migration from pre-0.2.0 installs; the
-       *   GET established the file really was empty this moment).
-       * - Route unreachable → stay silent after one warn; localStorage
-       *   keeps working.
+       *   the dialog is open) when it differs from the mirror.
+       * - File is empty but localStorage has a layout → upload it once per
+       *   page load (first-come-first-served migration from pre-0.2.0
+       *   installs). Later dialog opens do NOT re-upload an empty file, so a
+       *   恢复默认 done in another window is not silently undone while this
+       *   page stays open.
        */
-      async reconcile(arranger) {
+      async refresh(arranger, migrate = false) {
         try {
           const data = await this.get();
           this.up = true;
@@ -135,12 +139,16 @@ window.__ModuleLoader__.load({
               arranger.state = fileState;
               if (arranger.navList && arranger.navList.isConnected) arranger.render();
             }
-          } else if (local) {
+          } else if (local && migrate) {
             this.put(local).catch(e => this._down(e));
           }
         } catch (e) {
           this._down(e);
         }
+      },
+      /** Module-load entry point: file authority + one-shot legacy migration. */
+      async reconcile(arranger) {
+        return this.refresh(arranger, true);
       },
     };
 
@@ -1265,6 +1273,11 @@ window.__ModuleLoader__.load({
           tagRows(list);
           ARRANGER.watch(list);
           ARRANGER.render();
+          // Every dialog mount re-reads the shared config file: renames or
+          // regrouping done in another window/profile become visible here
+          // without a page reload (the file stays the authority; the local
+          // mirror only wins while the route is down).
+          API.refresh(ARRANGER);
           // Record the user's section choice (capture phase, so the shell
           // cannot swallow it). Only trusted clicks: our replay uses
           // element.click(). Own chrome ([data-dsa-own]: footer, head actions)
@@ -1279,9 +1292,14 @@ window.__ModuleLoader__.load({
           // Restore where the user left off (shell resets to its first row).
           if (!ARRANGER.editing) ARRANGER.scheduleReplay();
         }
-        // If list is null (transient DOM state), keep ARRANGER.navList; the
-        // next setEditing/render call re-anchors lazily via ensureNav().
+      } else if (list && ARRANGER.navList && !ARRANGER.navList.isConnected) {
+        // Same list element re-mounted after close (the shell kept the
+        // node): re-anchor and re-read the file, same as a fresh mount.
+        ARRANGER.ensureNav();
+        API.refresh(ARRANGER);
       }
+      // If list is null (transient DOM state), keep ARRANGER.navList; the
+      // next setEditing/render call re-anchors lazily via ensureNav().
     };
     const mo = new MutationObserver(() => boot());
     mo.observe(document.body, { childList: true, subtree: true });
