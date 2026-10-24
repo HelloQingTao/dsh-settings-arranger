@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, before, after } from 'node:test';
 import {
+  API_PREFIX,
   InvalidLayoutError,
   MAX_BODY_BYTES,
   SettingsStore,
@@ -251,6 +252,24 @@ test('unknown endpoints and wrong methods are answered 404/405', async () => {
   assert.equal(res.statusCode, 405);
   res = await handle({ method: 'GET', url: '/reset' });
   assert.equal(res.statusCode, 405);
+});
+
+test('the mount prefix is stripped: dsh delivers full URLs to prefix handlers', async () => {
+  // Regression (2026-10-24, caught live on a temp instance): dsh registers
+  // { kind: 'prefix' } handlers with the FULL request URL, while the endpoint
+  // table is inner-relative — before the strip, every real request 404'd.
+  let res = await handle({ url: `${API_PREFIX}/config` });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.config, null);
+  // Trailing slash tolerated.
+  res = await handle({ url: `${API_PREFIX}/config/` });
+  assert.equal(res.statusCode, 200);
+  // Same semantics for the reset endpoint.
+  res = await handle({ method: 'POST', url: `${API_PREFIX}/reset` });
+  assert.equal(res.statusCode, 200);
+  // A prefix-shaped but bogus endpoint still 404s.
+  res = await handle({ url: `${API_PREFIX}/nope` });
+  assert.equal(res.statusCode, 404);
 });
 
 test('GET /config on an empty store answers config:null plus health', async () => {

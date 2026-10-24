@@ -461,6 +461,14 @@ export function createApiHandler(store) {
       return;
     }
     let pathname = url.pathname;
+    // The dsh webServer hands `kind:'prefix'` handlers the FULL request URL
+    // (mount prefix included, e.g. `/settings-arranger/api/config`), while
+    // the endpoint table — and the unit tests — use the inner path
+    // (`/config`). Accept both by stripping the prefix when present.
+    if (pathname.startsWith(API_PREFIX)) {
+      pathname = pathname.slice(API_PREFIX.length);
+      if (!pathname.startsWith('/')) pathname = '/' + pathname;
+    }
     if (pathname.length > 1 && pathname.endsWith('/')) pathname = pathname.slice(0, -1);
     const endpoint = ENDPOINTS.find(candidate => candidate.path === pathname);
     if (endpoint === undefined) {
