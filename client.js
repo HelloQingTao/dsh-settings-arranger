@@ -2,7 +2,8 @@
 // Rearranges and groups the Settings dialog's left nav (settings.section rows)
 // via DOM enhancement. Entry button registers through the `settings.action`
 // slot (native extension point, renders left of the official open-document
-// button). Layout persists in localStorage.
+// button). Layout persists in localStorage (synchronous mirror) and in the
+// host's $DSH_HOME/settings-arranger.json via the loopback API (authority).
 //
 // Interaction model:
 // - Normal mode: each group renders as ONE native-styled nav row; clicking it
@@ -27,34 +28,121 @@ window.__ModuleLoader__.load({
     const MISC_LABEL = { zh: '其他', en: 'Other' };
 
     // ---- persisted state -------------------------------------------------
+    // Shared normalizer for both storage layers: localStorage and the host
+    // config file carry the same shape, so both readers go through this.
+    function parseLayout(parsed) {
+      if (!parsed || !Array.isArray(parsed.groups)) return null;
+      // `order` must survive the round-trip: it IS the top-level block
+      // sequence. Dropping it here made every move() rebuild the layout as
+      // "groups first, rows in native order", silently discarding any
+      // group-below-a-plain-row arrangement the user had made.
+      return {
+        groups: parsed.groups.filter(g => g && typeof g.id === 'string' && Array.isArray(g.sectionIds)),
+        collapsed: Array.isArray(parsed.collapsed) ? parsed.collapsed : [],
+        order: Array.isArray(parsed.order) ? parsed.order : null,
+        // Last section the user visited (data-dsa-id). Replayed on the next
+        // dialog open: the shell always resets the selection to its first
+        // row (rows carry data-modal-autofocus), so without this the user
+        // lands on 账号与余额 every time. Survives independently of whether
+        // any groups exist.
+        lastSection: typeof parsed.lastSection === 'string' ? parsed.lastSection : null,
+      };
+    }
     function loadState() {
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        if (!parsed || !Array.isArray(parsed.groups)) return null;
-        // `order` must survive the round-trip: it IS the top-level block
-        // sequence. Dropping it here made every move() rebuild the layout as
-        // "groups first, rows in native order", silently discarding any
-        // group-below-a-plain-row arrangement the user had made.
-        return {
-          groups: parsed.groups.filter(g => g && typeof g.id === 'string' && Array.isArray(g.sectionIds)),
-          collapsed: Array.isArray(parsed.collapsed) ? parsed.collapsed : [],
-          order: Array.isArray(parsed.order) ? parsed.order : null,
-          // Last section the user visited (data-dsa-id). Replayed on the next
-          // dialog open: the shell always resets the selection to its first
-          // row (rows carry data-modal-autofocus), so without this the user
-          // lands on 账号与余额 every time. Survives independently of whether
-          // any groups exist.
-          lastSection: typeof parsed.lastSection === 'string' ? parsed.lastSection : null,
-        };
+        return parseLayout(JSON.parse(raw));
       } catch { return null; }
     }
     function saveState(state) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
       catch (e) { console.warn('[dsh-settings-arranger] save failed:', e); }
+      // Mirror the change into the host's config file (debounced in API).
+      API.schedulePut();
     }
     function clearState() { try { localStorage.removeItem(STORAGE_KEY); } catch {} }
+
+    // ---- config-file sync (host half) -------------------------------------
+    // The host half (index.js) persists the layout in
+    // $DSH_HOME/settings-arranger.json — ONE global file shared by web and
+    // desktop profiles — so the arrangement survives browsers, ports and
+    // profile switches. localStorage stays the synchronous mirror: first
+    // paint reads it, the file corrects it on load, and when the route is
+    // unreachable the plugin behaves exactly like the pre-0.2.0
+    // localStorage-only build (silent degrade, one console warn).
+    const API = {
+      base: '/settings-arranger/api',
+      up: null, // tri-state: null unknown / true reachable / false degraded
+      _warned: false,
+      _putT: 0,
+      async get() {
+        const res = await fetch(this.base + '/config');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      },
+      async put(layout) {
+        const res = await fetch(this.base + '/config', {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ layout }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      },
+      async reset() {
+        const res = await fetch(this.base + '/reset', { method: 'POST' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+      },
+      _down(e) {
+        this.up = false;
+        if (!this._warned) {
+          this._warned = true;
+          console.warn('[dsh-settings-arranger] config file unreachable; falling back to localStorage:',
+            e && e.message ? e.message : e);
+        }
+      },
+      /** Coalesce a burst of saveState() calls into one disk write (300ms). */
+      schedulePut() {
+        clearTimeout(this._putT);
+        this._putT = setTimeout(() => {
+          // Read the mirror fresh: the latest state wins ("last write wins"
+          // is the deliberate concurrent-edit semantic, same as multi-tab).
+          const st = loadState();
+          if (!st) return;
+          this.put(st).then(() => { this.up = true; }).catch(e => this._down(e));
+        }, 300);
+      },
+      /**
+       * One-shot reconcile at module load; the file is the authority.
+       * - File has a layout → mirror it into localStorage (and re-render if
+       *   the dialog happens to be open) when it differs from the mirror.
+       * - File is empty but localStorage has a layout → upload it once
+       *   (first-come-first-served migration from pre-0.2.0 installs; the
+       *   GET established the file really was empty this moment).
+       * - Route unreachable → stay silent after one warn; localStorage
+       *   keeps working.
+       */
+      async reconcile(arranger) {
+        try {
+          const data = await this.get();
+          this.up = true;
+          const fileState = data && data.config && data.config.layout ? parseLayout(data.config.layout) : null;
+          const local = loadState();
+          if (fileState) {
+            if (JSON.stringify(fileState) !== JSON.stringify(local)) {
+              try { localStorage.setItem(STORAGE_KEY, JSON.stringify(fileState)); } catch {}
+              arranger.state = fileState;
+              if (arranger.navList && arranger.navList.isConnected) arranger.render();
+            }
+          } else if (local) {
+            this.put(local).catch(e => this._down(e));
+          }
+        } catch (e) {
+          this._down(e);
+        }
+      },
+    };
 
     // ---- locale ----------------------------------------------------------
     function localeText() {
@@ -819,7 +907,11 @@ window.__ModuleLoader__.load({
         resetBtn.addEventListener('click', async () => {
           const ok = await MODAL.askConfirm({ title: t('resetTitle'), description: t('resetConfirm'), danger: true, confirmLabel: t('reset') });
           if (!ok) return;
+          // Reset both layers: the local mirror now, the file fire-and-forget
+          // (its failure changes nothing — the file simply stays until the
+          // next successful write overwrites it).
           clearState(); this.state = null; this.render();
+          API.reset().catch(e => API._down(e));
         });
         footer.appendChild(newBtn); footer.appendChild(resetBtn);
         return footer;
@@ -1032,6 +1124,10 @@ window.__ModuleLoader__.load({
     // Debug/verification handle (harmless in production; useful for test
     // tooling to drive and inspect the plugin from the page console).
     if (typeof window !== 'undefined') window.__dsaArranger = ARRANGER;
+
+    // Reconcile once with the host config file: the file is the authority,
+    // the mirror follows it (or migrates into it on first run).
+    API.reconcile(ARRANGER);
 
     const cssQuote = s => (window.CSS && CSS.escape ? CSS.escape(s) : s.replace(/"/g, '\\"'));
 

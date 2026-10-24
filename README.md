@@ -13,7 +13,7 @@
 
 ## 中文
 
-设置页左侧那一列分区导航，插件装多了就变成一长条：顺序由各插件注册时写死、不能改，官方分区和一堆插件分区混在一起。这个插件给它加上**拖拽排序**和**自定义分组**，排布按浏览器保存，刷新不丢。
+设置页左侧那一列分区导航，插件装多了就变成一长条：顺序由各插件注册时写死、不能改，官方分区和一堆插件分区混在一起。这个插件给它加上**拖拽排序**和**自定义分组**，排布存进 dsh 数据目录的配置文件，换浏览器、换端口、网页版与桌面版之间都不丢。
 
 ### 功能
 
@@ -51,12 +51,12 @@ dsh plugin --profile web add dsh-settings-arranger
 3. 把条目拖进组里，或把分组头拖到别的位置；组内条目可以再拖去别的组，或拖出一级。
 4. 点 **完成** 退出整理模式，点分组头就能展开下拉菜单。
 
-排布存在浏览器的 localStorage 里（键 `dsh.settings-arranger.v1`），**按浏览器与站点隔离**，换浏览器或换端口要重新整理。
+排布持久化在 dsh 数据目录的 `~/.dsh/settings-arranger.json`——全局一份，网页版与桌面版共享，最后整理的生效；浏览器 localStorage（键 `dsh.settings-arranger.v1`）只是同步镜像，配置文件不可达时自动以它兜底。从旧版本升级会把已有排布自动迁移进文件，无需手动操作。
 
 ### 兼容
 
 - dsh `0.2.0-rc.2` 实测通过。
-- 纯客户端插件，只操作 DOM，不改任何其它插件的代码；同名的分区顺序仍由各插件自己的 `order` 决定，本插件只是在渲染后再重排。
+- 客户端只做 DOM 增强，不改任何其它插件的代码；宿主侧只新增一个仅回环可达的本地路由（`/settings-arranger/api`），读写自己的配置文件，不触碰官方设置存储。同名的分区顺序仍由各插件自己的 `order` 决定，本插件只是在渲染后再重排。
 
 ### 许可证
 
@@ -66,7 +66,7 @@ dsh plugin --profile web add dsh-settings-arranger
 
 ## English
 
-The settings dialog's left nav grows into an unmanageable list once you install a few plugins: order is baked in at registration time and official sections sit interleaved with plugin ones. This plugin adds **drag-to-reorder** and **custom groups**, persisted per browser.
+The settings dialog's left nav grows into an unmanageable list once you install a few plugins: order is baked in at registration time and official sections sit interleaved with plugin ones. This plugin adds **drag-to-reorder** and **custom groups**, persisted in a config file under the dsh data directory.
 
 ### Features
 
@@ -104,12 +104,12 @@ Refresh the Web GUI (or restart dsh); the bundle registers itself through the sh
 3. Drag entries into it, or drag the group head elsewhere; drag members across groups or back to the top level.
 4. Click **完成 (Done)** to leave arrange mode, then click a group head to open its dropdown.
 
-The layout lives in the browser's localStorage (key `dsh.settings-arranger.v1`), so it is **per browser and per origin** — a different browser or port starts fresh.
+The layout persists in `~/.dsh/settings-arranger.json` inside the dsh data directory — one global file shared by the web and desktop profiles, last arrangement wins. The browser's localStorage (key `dsh.settings-arranger.v1`) is only a synchronous mirror and takes over automatically when the file is unreachable. Upgrades from older versions migrate an existing layout into the file with no manual steps.
 
 ### Compatibility
 
 - Tested with dsh `0.2.0-rc.2`.
-- Pure client-side: it only touches the DOM and never modifies other plugins' code. Section order is still declared by each plugin; this plugin simply re-lays-out the rendered nav.
+- The client half only touches the DOM and never modifies other plugins' code; the host half adds one loopback-only local route (`/settings-arranger/api`) that reads and writes the plugin's own config file, leaving the official settings storage alone. Section order is still declared by each plugin; this plugin simply re-lays-out the rendered nav.
 
 ### License
 
