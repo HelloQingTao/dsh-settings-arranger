@@ -1,6 +1,1 @@
-node_modules/
-.playwright-cli/
-*.log
-.DS_Store
-dist/
-*.diag-backup
+*.tgz
