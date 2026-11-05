@@ -1255,6 +1255,42 @@ window.__ModuleLoader__.load({
       return null;
     }
 
+    /**
+     * Extract a nav row's identity (its visible label) WITHOUT depending on a
+     * particular icon markup.
+     *
+     * The shell renders a row roughly as:
+     *   <button>
+     *     <span class=navIcon aria-hidden=true>
+     *       <span data-slot=settings.section.icon> <svg/> </span>   <-- nested SPAN
+     *     </span>
+     *     <span class=navLabel>General</span>
+     *   </button>
+     * `settings.section.icon` is declared `inline: true`, so its slot outlet
+     * is a <span> nested inside navIcon. A document-order `span:last-child`
+     * query therefore resolves to that nested (text-less) icon wrapper on EVERY
+     * row — not to navLabel. All rows then get the same empty `data-dsa-id`,
+     * normalizeState() prunes the groups, and edit mode has no row to drag:
+     * "分组失效 + 完全无法编辑". Rows without any registered icon take the
+     * same path (the fallback svg still sits inside the slot's <span>), so this
+     * is not tied to any one plugin registering an icon.
+     *
+     * Fix: only consider the button's DIRECT children, and take the last
+     * <span> that actually has text. Icon wrappers live one level deeper and
+     * are never direct-child labels, so this is stable across slot markup,
+     * theme CSS-module hashes, extra icon registrations and older flat-svg
+     * nav markup alike.
+     */
+    function rowLabelOf(c) {
+      const spans = [...c.children].filter(el => el.tagName === 'SPAN');
+      for (let i = spans.length - 1; i >= 0; i--) {
+        const text = spans[i].textContent.trim();
+        if (text) return text;
+      }
+      // Fallback for a shell that renders the label as bare text / another tag.
+      return c.textContent.trim();
+    }
+
     function tagRows(list) {
       // Walk every button, not just direct children: a market update can
       // remount the nav list with an extra wrapper in between, and rows that
@@ -1272,12 +1308,13 @@ window.__ModuleLoader__.load({
         ordered.push(c);
       }
       ordered.forEach(c => {
+        // Re-tag an empty id too: a page that ran the buggy selector already
+        // wrote data-dsa-id="" on these nodes; re-anchoring must heal it.
         if (!c.getAttribute('data-dsa-id')) {
           // Row identity: the label span text is not stable; prefer React key —
           // not exposed. Use aria-current/a stable data attr? The rows carry no
           // id. Derive one from the label text (localized but stable per locale).
-          const labelEl = c.querySelector('span:last-child');
-          c.setAttribute('data-dsa-id', labelEl ? labelEl.textContent.trim() : c.textContent.trim());
+          c.setAttribute('data-dsa-id', rowLabelOf(c));
         }
       });
     }

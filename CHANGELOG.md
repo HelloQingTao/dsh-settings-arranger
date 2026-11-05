@@ -2,6 +2,20 @@
 
 本文件记录 dsh-settings-arranger 的对外发布内容，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+
+- **兼容 DSH 新版设置导航** — 设置分区图标通过内联 slot 渲染（图标 `<span>` 里再套一层 `<span>`），插件原本用 `span:last-child` 取行标识，会误命中这层空图标 span，导致每一行的标识都变成空字符串：分组全部失效、编辑模式下无法拖拽/改名。现在改为只从按钮的直接子 span 中取带文字的标签，扁平图标结构同样适用。
+- 顺带修复已被旧逻辑写入空标识的行：重新打开设置时会自动恢复正确标识，无需手动重置。
+
+### English
+
+### Fixed
+
+- **DSH 0.2.2+ settings nav compatibility** — the settings nav now renders its section icons through an inline slot, which nests an extra `<span>` inside the icon. The old `span:last-child` identity probe matched that empty icon wrapper on every row instead of the label, so all row ids collapsed to `""`: groups were pruned and edit mode could not drag or rename anything. Identity now comes from the last *direct-child* `<span>` that actually has text; the older flat-svg markup keeps working.
+- Rows already stamped with an empty id by the old logic are healed on the next dialog open — no manual reset needed.
+
 ## [0.1.5] - 2026-10-24
 
 ### 新增

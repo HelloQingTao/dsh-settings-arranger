@@ -43,7 +43,7 @@
     "access": "public"
   },
   "scripts": {
-    "test": "node --test test/host.test.js"
+    "test": "node --test test/"
   },
   "engines": {
     "node": ">=20",
