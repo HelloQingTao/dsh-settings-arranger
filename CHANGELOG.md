@@ -2,6 +2,18 @@
 
 本文件记录 dsh-settings-arranger 的对外发布内容，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+
+- **修复整理模式下拖动卡顿** — `dragover` 即使指针不动也会每秒触发几十到上百次，旧代码每次都清空并重画插入标记（整棵导航扫描 + class 写入），这些写入又被导航上的 MutationObserver 看到，唤醒 `syncFlags()` 全量重排每一行，形成「自己喂自己」的循环。现在只有目标行或上/下方向真正变化时才写 DOM，并在拖动期间静默该观察者。测量见 [PERF.md](PERF.md)：静止悬停 120 次事件的全量重排从 122 次降到 1 次（收尾同步），class 写入从 242 次降到 4 次。
+
+### English
+
+### Fixed
+
+- **Edit-mode drag no longer stutters** — `dragover` fires dozens of times per second even with a still pointer. The old handler cleared and redrew the insertion marker on every event (full nav scan + class writes), which the nav's MutationObserver saw and answered with `syncFlags()` — a full re-assert of every row — a self-feeding loop. Now the DOM is written only when the target row or the before/after side actually changes, and the observer is muted for the duration of the drag. Measured in [PERF.md](PERF.md): over 120 steady-hover events, full re-asserts dropped from 122 to 1 (the deliberate end-of-drag sync) and class writes from 242 to 4.
+
 ## [0.1.6] - 2026-11-05
 
 ### 修复
