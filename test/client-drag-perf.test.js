@@ -45,7 +45,7 @@ function method(name) {
   return SRC.slice(start + 1, end);
 }
 
-const NAMES = ['attachDnd', 'clearMarks', 'setDropMark', 'syncFlags', 'watch'];
+const NAMES = ['attachDnd', 'clearMarks', 'setDropMark', 'endDrag', 'syncFlags', 'watch'];
 const parts = NAMES.map(method);
 // Bare `name() {}` methods are only valid inside an object literal.
 const body = 'return {\n' + parts.filter(Boolean).join(',\n') + '\n};';
@@ -61,8 +61,8 @@ class FakeMutationObserver {
   observe() {}
   disconnect() { observerCb = null; pending = []; }
 }
-function queueMutation(target) {
-  pending.push({ type: 'attributes', target, attributeName: 'class' });
+function queueMutation(target, type = 'attributes') {
+  pending.push({ type, target, attributeName: 'class' });
 }
 function flush() {
   const records = pending.splice(0);
@@ -256,4 +256,55 @@ test('setDropMark writes only when {el, side} changes', () => {
   assert.equal(counts.classWrites, 3, 'side flip → remove + add');
   A.setDropMark(rows[2], 'after');
   assert.equal(counts.classWrites, 5, 'new target → remove old + add new');
+});
+
+// ---- exit-path guards --------------------------------------------------
+// A muted observer must never outlive the gesture, and a host className
+// rewrite must not leave the marker blank while the cached {el, side} matches.
+
+test('a detached drag source re-arms the nav observer', () => {
+  const { A, rows, list, fire } = harness();
+  fire(rows[0], 'dragstart');
+  flush();
+  assert.equal(A._dragging, true, 'observer is muted during the drag');
+
+  // Host re-render detaches the source: neither dragend nor drop will arrive.
+  rows[0].isConnected = false;
+  pending.push({ type: 'childList', target: list, removedNodes: [rows[0]] });
+  counts = C();
+  flush();
+
+  assert.equal(A._dragging, false, 'structural change ends the gesture');
+  assert.equal(A._dragEl, null, 'drag source is released');
+  assert.ok(counts.syncFlagsCalls >= 1, 'normal repair path runs again');
+
+  counts = C();
+  queueMutation(rows[1]);
+  flush();
+  assert.ok(counts.syncFlagsCalls >= 1, 'observer stays live after recovery');
+});
+
+test('marker recovers when the host rewrites the hovered row className', () => {
+  const { rows, fire } = harness();
+  fire(rows[0], 'dragstart');
+  flush();
+  fire(rows[3], 'dragover', { clientY: rows[3]._rect.top + 2 });
+  flush();
+  assert.ok(rows[3].classList.contains('dsa-drop-before'), 'marker shown');
+
+  // The shell rewrites className mid-drag; our class is gone but the cache
+  // still points at this row.
+  rows[3]._classes.clear();
+  fire(rows[3], 'dragover', { clientY: rows[3]._rect.top + 2 });
+  flush();
+  assert.ok(rows[3].classList.contains('dsa-drop-before'), 'marker recovers');
+
+  // Recovery must not reintroduce the hot-path writes.
+  counts = C();
+  for (let i = 0; i < 120; i++) {
+    fire(rows[3], 'dragover', { clientY: rows[3]._rect.top + 2 });
+    flush();
+  }
+  assert.equal(counts.classWrites, 0, 'steady hover is still a no-op');
+  assert.equal(counts.scans, 0, 'no full-subtree scan on the hot path');
 });

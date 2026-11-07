@@ -470,6 +470,7 @@ window.__ModuleLoader__.load({
       _raf: 0,   // pending post-render re-check
       _suppress: false,
       _dragging: false,   // mute the nav observer while our own drag decorations change
+      _dragEl: null,      // drag source, so a detached node can still be cleaned up
       _dropMark: null,    // {el, side} — the ONE element currently carrying the insertion marker
       submenu: null, // {el, gid, onClose}
       /** Single read path for mutation handlers: always the freshest persisted
@@ -960,7 +961,7 @@ window.__ModuleLoader__.load({
         el.dataset.dsaDnd = '1';
         el.addEventListener('dragstart', e => {
           if (e.pointerType === 'touch' || !this.editing) {
-            this._dragging = false;
+            this.endDrag();
             e.preventDefault();
             return;
           }
@@ -969,16 +970,13 @@ window.__ModuleLoader__.load({
           // so without this every write wakes syncFlags() → a full nav
           // re-assert → the self-feeding loop that made edit-mode drag sticky.
           this._dragging = true;
+          this._dragEl = el;
           this._dropMark = null;
           el.classList.add('dsa-dragging');
           e.dataTransfer.effectAllowed = 'move';
           e.dataTransfer.setData('text/dsa', JSON.stringify(ref));
         });
-        el.addEventListener('dragend', () => {
-          this._dragging = false;
-          el.classList.remove('dsa-dragging');
-          this.clearMarks();
-        });
+        el.addEventListener('dragend', () => { this.endDrag(); });
         el.addEventListener('dragover', e => {
           if (!this.editing) return;
           e.preventDefault();
@@ -1001,8 +999,7 @@ window.__ModuleLoader__.load({
           // ([data-dsa-own]) and apply() detaches it during move()'s render,
           // so its dragend may never fire. Leaving _dragging true would mute
           // the observer forever.
-          this._dragging = false;
-          this.clearMarks();
+          this.endDrag();
           let src;
           try { src = JSON.parse(e.dataTransfer.getData('text/dsa')); } catch { return; }
           if (!src || !src.id) return;
@@ -1018,13 +1015,29 @@ window.__ModuleLoader__.load({
         });
       },
 
+      /** End the gesture from every exit path: dragend, drop, or a host
+       *  re-render that detaches nodes. The source node may already be gone —
+       *  that is exactly why the reset cannot live only in dragend/drop. */
+      endDrag() {
+        if (!this._dragging) return;
+        this._dragging = false;
+        const el = this._dragEl;
+        this._dragEl = null;
+        if (el) el.classList.remove('dsa-dragging');
+        this.clearMarks();
+      },
+
       /** Move the single insertion marker, touching the DOM ONLY when the
        *  target or the side changes. This is the hot path fix: a still pointer
        *  now produces zero writes and zero observer callbacks. */
       setDropMark(el, side) {
         const cls = side === 'before' ? 'dsa-drop-before' : 'dsa-drop-after';
         const prev = this._dropMark;
-        if (prev && prev.el === el && prev.side === side) return;
+        // A host re-render can rewrite className (dropping our marker) while
+        // the cached {el, side} still matches. Verify the DOM on a cache hit
+        // so the marker recovers instead of staying blank for the gesture.
+        // contains() is a read: a still pointer still produces zero writes.
+        if (prev && prev.el === el && prev.side === side && el.classList.contains(cls)) return;
         if (prev && prev.el.isConnected) {
           prev.el.classList.remove('dsa-drop-before', 'dsa-drop-after');
         }
@@ -1195,7 +1208,15 @@ window.__ModuleLoader__.load({
           // observed here. Muting for the drag keeps a stray write from waking
           // syncFlags() → full nav re-assert mid-gesture. move() re-syncs every
           // flag through render()/apply() on drop, so nothing is lost.
-          if (this._dragging) return;
+          if (this._dragging) {
+            // A structural change means the host re-rendered the nav: the drag
+            // source may now be detached, so its dragend never fires and drop
+            // is not coming if the user cancels. Treat that as the end of the
+            // gesture and let the normal repair path below run — otherwise
+            // _dragging would mute this observer for good.
+            if (records.some(r => r.type === 'childList')) this.endDrag();
+            else return;
+          }
           // The shell rewrites className/aria-current on its own rows whenever
           // the active section changes, which would silently drop our marks;
           // re-assert them before deciding whether a full re-layout is needed.

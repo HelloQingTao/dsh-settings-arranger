@@ -42,7 +42,7 @@ function method(name) {
   return SRC.slice(start + 1, end);
 }
 
-const NAMES = ['attachDnd', 'clearMarks', 'setDropMark', 'syncFlags', 'watch'];
+const NAMES = ['attachDnd', 'clearMarks', 'setDropMark', 'endDrag', 'syncFlags', 'watch'];
 const parts = NAMES.map(method);
 const present = NAMES.filter((n, i) => parts[i]);
 // Bare `name() {}` method definitions are only valid inside an object
