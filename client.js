@@ -469,6 +469,8 @@ window.__ModuleLoader__.load({
       _t: 0,     // pending full-render debounce
       _raf: 0,   // pending post-render re-check
       _suppress: false,
+      _dragging: false,   // mute the nav observer while our own drag decorations change
+      _dropMark: null,    // {el, side} — the ONE element currently carrying the insertion marker
       submenu: null, // {el, gid, onClose}
       /** Single read path for mutation handlers: always the freshest persisted
           copy, never a hand-built object missing newer top-level keys (order). */
@@ -957,24 +959,49 @@ window.__ModuleLoader__.load({
         if (el.dataset.dsaDnd === '1') return;
         el.dataset.dsaDnd = '1';
         el.addEventListener('dragstart', e => {
-          if (e.pointerType === 'touch' || !this.editing) { e.preventDefault(); return; }
+          if (e.pointerType === 'touch' || !this.editing) {
+            this._dragging = false;
+            e.preventDefault();
+            return;
+          }
+          // Mute the nav MutationObserver for the whole drag. Our own marker /
+          // .dsa-dragging class writes are observed (attributeFilter: 'class'),
+          // so without this every write wakes syncFlags() → a full nav
+          // re-assert → the self-feeding loop that made edit-mode drag sticky.
+          this._dragging = true;
+          this._dropMark = null;
           el.classList.add('dsa-dragging');
           e.dataTransfer.effectAllowed = 'move';
           e.dataTransfer.setData('text/dsa', JSON.stringify(ref));
         });
-        el.addEventListener('dragend', () => { el.classList.remove('dsa-dragging'); this.clearMarks(); });
+        el.addEventListener('dragend', () => {
+          this._dragging = false;
+          el.classList.remove('dsa-dragging');
+          this.clearMarks();
+        });
         el.addEventListener('dragover', e => {
           if (!this.editing) return;
           e.preventDefault();
           const rect = el.getBoundingClientRect();
           const before = e.clientY < rect.top + rect.height / 2;
-          this.clearMarks();
-          el.classList.add(before ? 'dsa-drop-before' : 'dsa-drop-after');
+          // dragover fires continuously (~60-120/s) even when the pointer is
+          // STILL. Rewriting clearMarks()+classList.add() on every event used to
+          // produce 2 class mutations and a full nav scan per frame. Only touch
+          // the DOM when the target or the side actually changes.
+          this.setDropMark(el, before ? 'before' : 'after');
         });
-        el.addEventListener('dragleave', () => { el.classList.remove('dsa-drop-before', 'dsa-drop-after'); });
+        // Intentionally NO dragleave handler: it also fires when crossing a
+        // child element inside the same row, which used to blank the marker and
+        // re-arm the observer on every pixel. The next dragover relocates the
+        // mark; dragend / drop clear it.
         el.addEventListener('drop', e => {
           if (!this.editing) return;
           e.preventDefault(); e.stopPropagation();
+          // Reset here, not only in dragend: a group head is our own chrome
+          // ([data-dsa-own]) and apply() detaches it during move()'s render,
+          // so its dragend may never fire. Leaving _dragging true would mute
+          // the observer forever.
+          this._dragging = false;
           this.clearMarks();
           let src;
           try { src = JSON.parse(e.dataTransfer.getData('text/dsa')); } catch { return; }
@@ -991,7 +1018,30 @@ window.__ModuleLoader__.load({
         });
       },
 
+      /** Move the single insertion marker, touching the DOM ONLY when the
+       *  target or the side changes. This is the hot path fix: a still pointer
+       *  now produces zero writes and zero observer callbacks. */
+      setDropMark(el, side) {
+        const cls = side === 'before' ? 'dsa-drop-before' : 'dsa-drop-after';
+        const prev = this._dropMark;
+        if (prev && prev.el === el && prev.side === side) return;
+        if (prev && prev.el.isConnected) {
+          prev.el.classList.remove('dsa-drop-before', 'dsa-drop-after');
+        }
+        el.classList.add(cls);
+        this._dropMark = { el, side };
+      },
+
       clearMarks() {
+        const prev = this._dropMark;
+        this._dropMark = null;
+        if (prev && prev.el.isConnected) {
+          prev.el.classList.remove('dsa-drop-before', 'dsa-drop-after');
+          return;
+        }
+        // Fallback sweep for a stale mark we no longer track (host re-render
+        // dropped the element, or a previous instance left one). Runs only at
+        // drag end / drop, never on the dragover hot path.
         this.navList?.querySelectorAll('.dsa-drop-before, .dsa-drop-after')
           .forEach(n => n.classList.remove('dsa-drop-before', 'dsa-drop-after'));
       },
@@ -1140,6 +1190,12 @@ window.__ModuleLoader__.load({
         if (!list) return;
         this.observer = new MutationObserver(records => {
           if (this._suppress) return;
+          // While we drag, our own .dsa-dragging / drop-marker class writes (and
+          // the shell's aria-current churn as the pointer crosses rows) are all
+          // observed here. Muting for the drag keeps a stray write from waking
+          // syncFlags() → full nav re-assert mid-gesture. move() re-syncs every
+          // flag through render()/apply() on drop, so nothing is lost.
+          if (this._dragging) return;
           // The shell rewrites className/aria-current on its own rows whenever
           // the active section changes, which would silently drop our marks;
           // re-assert them before deciding whether a full re-layout is needed.
