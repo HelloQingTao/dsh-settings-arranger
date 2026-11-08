@@ -2,6 +2,18 @@
 
 本文件记录 dsh-settings-arranger 的对外发布内容，格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.8] - 2026-11-08
+
+### 修复
+
+- **只在设置页生效** — 修复分组整理误作用到其它弹窗的问题：此前部分弹窗也会被插入分组标题、内容被排成纵向，现在只对设置页自身的导航栏生效。
+
+### English
+
+### Fixed
+
+- **Settings-only grouping** — fixed grouping leaking into unrelated dialogs: some dialogs could get group headers inserted and their rows re-stacked vertically. Grouping now applies only to the Settings dialog's navigation.
+
 ## [0.1.7] - 2026-11-07
 
 ### 修复

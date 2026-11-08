@@ -1312,21 +1312,63 @@ window.__ModuleLoader__.load({
       return st;
     }
 
+    // ---- settings-nav identity ------------------------------------------
+    //
+    // The ONLY surface that may own our layout is the Settings dialog's left
+    // nav list. A false positive here is not cosmetic: release 0.1.6 accepted
+    // any aria-modal dialog whose marker container held ≥3 <button> children,
+    // so @zfgcta/dsh-multi-folder's directory browser — also
+    // role="dialog"/aria-modal, with a breadcrumb row (.mf-bw-nav) carrying
+    // one button per path segment plus "up", the current one bearing
+    // aria-current — was tagged as our nav list. Its breadcrumbs got
+    // force-stacked by `.dsa-nav-list{flex-direction:column}` and the saved
+    // group heads were inserted underneath: the user saw the Settings
+    // groups appear on top of the directory picker ("选了一次路径后，顶上冒
+    // 出设置页分组").
+    //
+    // The fix is positive identity plus structural proof:
+    //   1. DSH 0.2.2+ marks its settings panel with
+    //      data-shortcut-modal="settings" (dsh-client-ui-settings-general);
+    //      no other modal gets to present a nav list to us.
+    //   2. Older shells carry no marker, so the fallback demands structure a
+    //      breadcrumb row cannot fake: a <nav> ancestor AND every row being
+    //      an icon+label cell (the shell's …_navLabel span).
+    function looksLikeNavCell(btn) {
+      // Shell rows: <button><span class="…navIcon">…</span><span class="…navLabel">Text</span></button>
+      if (btn.querySelector('[class*="navLabel"]')) return true;
+      // Fallback for a shell whose CSS-module hash drops the semantic suffix:
+      // a row still renders an icon wrapper plus a non-empty label span.
+      const spans = [...btn.children].filter(el => el.tagName === 'SPAN');
+      return spans.length >= 2 && spans.some(s => s.textContent.trim() !== '');
+    }
+
+    function looksLikeSettingsNavList(list) {
+      const buttons = [...list.children].filter(c => c.tagName === 'BUTTON');
+      if (buttons.length < 3) return false;
+      // The shell wraps its nav column in <nav>; a breadcrumb row is a plain
+      // <div class="…-nav">, so this alone already rules the picker out.
+      if (!list.closest || !list.closest('nav')) return false;
+      // Every row must be a nav cell; a breadcrumb button wraps bare text.
+      return buttons.every(looksLikeNavCell);
+    }
+
     function findNavList() {
-      // Settings dialog renders its nav list as a flex-column container of
-      // section buttons (each button[data-modal-autofocus] or [aria-current]).
-      // Structural anchor: dialog overlay panel with a nav column whose direct
-      // children include ≥3 such buttons.
       const panels = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
       for (const panel of panels) {
+        const marked = panel.getAttribute('data-shortcut-modal') === 'settings';
+        const unmarked = !panel.hasAttribute('data-shortcut-modal');
+        // A panel tagged as some other modal (shortcuts, market, …) is never
+        // the settings dialog: skip it entirely.
+        if (!marked && !unmarked) continue;
         for (const btn of panel.querySelectorAll('button[data-modal-autofocus], button[aria-current]')) {
           const list = btn.parentElement;
           if (!list) continue;
-          // An already-anchored list is still a valid candidate while it is
-          // connected (the marker only prevents double boot in boot()).
-          if (list.getAttribute('data-dsa-anchored') === '1' && list.isConnected) return list;
-          const buttons = [...list.children].filter(c => c.tagName === 'BUTTON');
-          if (buttons.length >= 3) return list;
+          // An already-anchored list stays valid while connected (the marker
+          // only prevents double boot in boot()). Only the positively
+          // identified Settings panel may take this shortcut: a stale anchor
+          // left on a breadcrumb container by 0.1.6 must not be resurrected.
+          if (marked && list.getAttribute('data-dsa-anchored') === '1' && list.isConnected) return list;
+          if (looksLikeSettingsNavList(list)) return list;
         }
       }
       return null;
